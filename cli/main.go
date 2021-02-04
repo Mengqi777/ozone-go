@@ -1,6 +1,5 @@
 package main
 
-// import "github.com/mengqi777/ozone-go"
 import (
 	"encoding/json"
 	"fmt"

@@ -1,6 +1,6 @@
-module github.com/mengqi777/ozone-go
+module github.com/mengqi777/ozone-go/cli
 
-go 1.13
+go 1.15
 
 replace github.com/mengqi777/ozone-go/api => ../api
 

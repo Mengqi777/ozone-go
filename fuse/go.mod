@@ -1,6 +1,6 @@
- module github.com/mengqi777/ozone-go/lib
+ module github.com/mengqi777/ozone-go/fuse
 
-go 1.13
+go 1.15
 
 require (
 	github.com/mengqi777/ozone-go/api v0.0.0-20180911220305-26e67e76b6c3
