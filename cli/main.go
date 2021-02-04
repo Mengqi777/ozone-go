@@ -1,10 +1,10 @@
 package main
 
-// import "github.com/elek/ozone-go"
+// import "github.com/mengqi777/ozone-go"
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/elek/ozone-go/api"
+	"github.com/mengqi777/ozone-go/api"
 	"github.com/urfave/cli"
 	"os"
 	"strings"

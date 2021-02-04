@@ -1,7 +1,7 @@
 package om
 
 import (
-	ozone_proto "github.com/elek/ozone-go/api/proto/ozone"
+	ozone_proto "github.com/mengqi777/ozone-go/api/proto/ozone"
 )
 
 func (om *OmClient) CreateBucket(volume string, bucket string) error {

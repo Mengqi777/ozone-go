@@ -2,9 +2,9 @@ package om
 
 import (
 	"errors"
-	"github.com/elek/ozone-go/api/common"
-	"github.com/elek/ozone-go/api/proto/hdds"
-	ozone_proto "github.com/elek/ozone-go/api/proto/ozone"
+	"github.com/mengqi777/ozone-go/api/common"
+	"github.com/mengqi777/ozone-go/api/proto/hdds"
+	ozone_proto "github.com/mengqi777/ozone-go/api/proto/ozone"
 	"github.com/hortonworks/gohadoop"
 	hadoop_ipc_client "github.com/hortonworks/gohadoop/hadoop_common/ipc/client"
 	uuid "github.com/nu7hatch/gouuid"

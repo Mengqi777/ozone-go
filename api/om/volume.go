@@ -1,8 +1,8 @@
 package om
 
 import (
-	"github.com/elek/ozone-go/api/common"
-	ozone_proto "github.com/elek/ozone-go/api/proto/ozone"
+	"github.com/mengqi777/ozone-go/api/common"
+	ozone_proto "github.com/mengqi777/ozone-go/api/proto/ozone"
 )
 
 func (om *OmClient) ListVolumes() ([]common.Volume, error) {

@@ -2,11 +2,11 @@ package api
 
 import (
 	"errors"
-	"github.com/elek/ozone-go/api/common"
-	"github.com/elek/ozone-go/api/datanode"
-	dnproto "github.com/elek/ozone-go/api/proto/datanode"
-	"github.com/elek/ozone-go/api/proto/hdds"
-	omproto "github.com/elek/ozone-go/api/proto/ozone"
+	"github.com/mengqi777/ozone-go/api/common"
+	"github.com/mengqi777/ozone-go/api/datanode"
+	dnproto "github.com/mengqi777/ozone-go/api/proto/datanode"
+	"github.com/mengqi777/ozone-go/api/proto/hdds"
+	omproto "github.com/mengqi777/ozone-go/api/proto/ozone"
 
 	"io"
 )

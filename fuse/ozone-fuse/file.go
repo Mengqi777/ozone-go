@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/elek/ozone-go/api"
-	"github.com/elek/ozone-go/api/common"
+	"github.com/mengqi777/ozone-go/api"
+	"github.com/mengqi777/ozone-go/api/common"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"time"

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 syntax = "proto3";
-option go_package = "github.com/elek/ozone-go/api/proto/ratis";
+option go_package = "github.com/mengqi777/ozone-go/api/proto/ratis";
 option java_package = "org.apache.ratis.proto.grpc";
 option java_outer_classname = "GrpcProtos";
 option java_generate_equals_and_hash = true;
@@ -26,37 +26,37 @@ import "raft.proto";
 
 service RaftClientProtocolService {
     // A client-to-server RPC to set new raft configuration
-    rpc setConfiguration (ratis.common.SetConfigurationRequestProto) returns (ratis.common.RaftClientReplyProto) {
-    }
+    rpc setConfiguration(ratis.common.SetConfigurationRequestProto)
+        returns(ratis.common.RaftClientReplyProto) {}
 
     // A client-to-server stream RPC to ordered async requests
-    rpc ordered (stream ratis.common.RaftClientRequestProto) returns (stream ratis.common.RaftClientReplyProto) {
-    }
+    rpc ordered(stream ratis.common.RaftClientRequestProto)
+        returns (stream ratis.common.RaftClientReplyProto) {}
 
     // A client-to-server stream RPC for unordered async requests
-    rpc unordered (stream ratis.common.RaftClientRequestProto) returns (stream ratis.common.RaftClientReplyProto) {
-    }
+    rpc unordered(stream ratis.common.RaftClientRequestProto)
+        returns (stream ratis.common.RaftClientReplyProto) {}
 }
 
 service RaftServerProtocolService {
-    rpc requestVote (ratis.common.RequestVoteRequestProto) returns (ratis.common.RequestVoteReplyProto) {
-    }
+    rpc requestVote(ratis.common.RequestVoteRequestProto)
+        returns(ratis.common.RequestVoteReplyProto) {}
 
-    rpc appendEntries (stream ratis.common.AppendEntriesRequestProto) returns (stream ratis.common.AppendEntriesReplyProto) {
-    }
+    rpc appendEntries(stream ratis.common.AppendEntriesRequestProto)
+        returns(stream ratis.common.AppendEntriesReplyProto) {}
 
-    rpc installSnapshot (stream ratis.common.InstallSnapshotRequestProto) returns (ratis.common.InstallSnapshotReplyProto) {
-    }
+    rpc installSnapshot(stream ratis.common.InstallSnapshotRequestProto)
+        returns(ratis.common.InstallSnapshotReplyProto) {}
 }
 
 service AdminProtocolService {
     // A client-to-server RPC to add a new group
-    rpc groupManagement (ratis.common.GroupManagementRequestProto) returns (ratis.common.RaftClientReplyProto) {
-    }
+    rpc groupManagement(ratis.common.GroupManagementRequestProto)
+        returns(ratis.common.RaftClientReplyProto) {}
 
-    rpc groupList (ratis.common.GroupListRequestProto) returns (ratis.common.GroupListReplyProto) {
-    }
+    rpc groupList(ratis.common.GroupListRequestProto)
+        returns(ratis.common.GroupListReplyProto) {}
 
-    rpc groupInfo (ratis.common.GroupInfoRequestProto) returns (ratis.common.GroupInfoReplyProto) {
-    }
+    rpc groupInfo(ratis.common.GroupInfoRequestProto)
+        returns(ratis.common.GroupInfoReplyProto) {}
 }

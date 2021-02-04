@@ -21,8 +21,8 @@
  * Please see http://wiki.apache.org/hadoop/Compatibility
  * for what changes are allowed for a *unstable* .proto interface.
  */
-
-option go_package = "github.com/elek/ozone-go/api/proto/hdds";
+syntax = "proto2";
+option go_package = "github.com/mengqi777/ozone-go/api/proto/hdds";
 option java_package = "org.apache.hadoop.hdds.protocol.proto";
 option java_outer_classname = "HddsProtos";
 option java_generic_services = true;
@@ -30,8 +30,8 @@ option java_generate_equals_and_hash = true;
 package hadoop.hdds;
 
 message UUID {
-   required int64 mostSigBits = 1;
-   required int64 leastSigBits = 2;
+    required int64 mostSigBits = 1;
+    required int64 leastSigBits = 2;
 }
 
 message DatanodeDetailsProto {
@@ -44,10 +44,6 @@ message DatanodeDetailsProto {
     // network name, can be Ip address or host name, depends
     optional string networkName = 6;
     optional string networkLocation = 7; // Network topology location
-    optional string version = 8;         // Datanode version
-    optional int64 setupTime = 9;
-    optional string revision = 10;
-    optional string buildDate = 11;
     // TODO(runzhiwang): when uuid is gone, specify 1 as the index of uuid128 and mark as required
     optional UUID uuid128 = 100; // UUID with 128 bits assigned to the Datanode.
 }
@@ -69,10 +65,10 @@ message Port {
 }
 
 message PipelineID {
-  // deprecated, please use uuid128 instead
-  optional string id = 1;
-  // TODO(runzhiwang): when id is gone, specify 1 as the index of uuid128 and mark as required
-  optional UUID uuid128 = 100;
+    // deprecated, please use uuid128 instead
+    optional string id = 1;
+    // TODO(runzhiwang): when id is gone, specify 1 as the index of uuid128 and mark as required
+    optional UUID uuid128 = 100;
 }
 
 enum PipelineState {
@@ -186,8 +182,8 @@ message ContainerInfoProto {
 }
 
 message ContainerWithPipeline {
-  required ContainerInfoProto containerInfo = 1;
-  required Pipeline pipeline = 2;
+    required ContainerInfoProto containerInfo = 1;
+    required Pipeline pipeline = 2;
 }
 
 message GetScmInfoRequestProto {

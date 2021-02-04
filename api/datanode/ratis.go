@@ -2,8 +2,8 @@ package datanode
 
 import (
 	"encoding/binary"
-	"github.com/elek/ozone-go/api/proto/datanode"
-	"github.com/elek/ozone-go/api/proto/ratis"
+	"github.com/mengqi777/ozone-go/api/proto/datanode"
+	"github.com/mengqi777/ozone-go/api/proto/ratis"
 	protobuf "github.com/golang/protobuf/proto"
 )
 

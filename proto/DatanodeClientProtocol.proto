@@ -25,7 +25,7 @@
 // This file contains protocol buffers that are used to transfer data
 // to and from the datanode.
 syntax = "proto2";
-option go_package = "github.com/elek/ozone-go/api/proto/datanode";
+option go_package = "github.com/mengqi777/ozone-go/api/proto/datanode";
 option java_package = "org.apache.hadoop.hdds.protocol.datanode.proto";
 option java_outer_classname = "ContainerProtos";
 option java_generate_equals_and_hash = true;
@@ -251,8 +251,8 @@ message ContainerDataProto {
 }
 
 message Container2BCSIDMapProto {
-   // repeated Container2BCSIDMapEntryProto container2BCSID = 1;
-    map <int64, int64> container2BCSID = 1;
+  // repeated Container2BCSIDMapEntryProto container2BCSID = 1;
+  map <int64, int64> container2BCSID = 1;
 }
 
 enum ContainerType {
@@ -377,11 +377,11 @@ message ChecksumData {
 }
 
 enum ChecksumType {
-    NONE = 1;
-    CRC32 = 2;
-    CRC32C = 3;
-    SHA256 = 4;
-    MD5 = 5;
+  NONE = 1;
+  CRC32 = 2;
+  CRC32C = 3;
+  SHA256 = 4;
+  MD5 = 5;
 }
 
 message  WriteChunkRequestProto  {
@@ -462,7 +462,7 @@ message CopyContainerResponseProto {
 service XceiverClientProtocolService {
   // A client-to-datanode RPC to send container commands
   rpc send(stream ContainerCommandRequestProto) returns
-    (stream ContainerCommandResponseProto) {};
+      (stream ContainerCommandResponseProto) {};
 
 }
 
