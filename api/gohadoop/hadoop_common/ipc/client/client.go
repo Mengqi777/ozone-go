@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/golang/protobuf/proto"
-	"github.com/hortonworks/gohadoop"
-	"github.com/hortonworks/gohadoop/hadoop_common"
-	"github.com/hortonworks/gohadoop/hadoop_common/security"
+	"github.com/mengqi777/ozone-go/api/common"
+	"github.com/mengqi777/ozone-go/api/gohadoop/hadoop_common"
+	"github.com/mengqi777/ozone-go/api/gohadoop/hadoop_common/security"
+	log "github.com/wonderivan/logger"
+
 	"github.com/nu7hatch/gouuid"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -60,7 +61,7 @@ func (c *Client) Call(rpc *hadoop_common.RequestHeaderProto, rpcRequest proto.Me
 	connectionId := connection_id{user: *c.Ugi.RealUser, protocol: *rpc.DeclaringClassProtocolName, address: c.ServerAddress}
 
 	// Get connection to server
-	//log.Println("Connecting...", c)
+	//log.Info("Connecting...", c)
 	conn, err := getConnection(c, &connectionId)
 	if err != nil {
 		return err
@@ -70,7 +71,7 @@ func (c *Client) Call(rpc *hadoop_common.RequestHeaderProto, rpcRequest proto.Me
 	rpcCall := call{callId: 0, procedure: rpc, request: rpcRequest, response: rpcResponse}
 	err = sendRequest(c, conn, &rpcCall)
 	if err != nil {
-		log.Fatal("sendRequest", err)
+		log.Error("sendRequest", err)
 		return err
 	}
 
@@ -88,7 +89,7 @@ var connectionPool = struct {
 func findUsableTokenForService(service string) (*hadoop_common.TokenProto, bool) {
 	userTokens := security.GetCurrentUser().GetUserTokens()
 
-	log.Printf("looking for token for service: %s\n", service)
+	log.Info("looking for token for service: %s\n", service)
 
 	if len(userTokens) == 0 {
 		return nil, false
@@ -107,13 +108,13 @@ func getConnection(c *Client, connectionId *connection_id) (*connection, error) 
 	connectionPool.RLock()
 	con := connectionPool.connections[*connectionId]
 	connectionPool.RUnlock()
-
+println("host",c.ServerAddress)
 	// If necessary, create a new connection and save it in the connection-pool
 	var err error
 	if con == nil {
 		con, err = setupConnection(c)
 		if err != nil {
-			log.Fatal("Couldn't setup connection: ", err)
+			log.Error("Couldn't setup connection: ", err)
 			return nil, err
 		}
 
@@ -121,25 +122,25 @@ func getConnection(c *Client, connectionId *connection_id) (*connection, error) 
 		connectionPool.connections[*connectionId] = con
 		connectionPool.Unlock()
 
-		var authProtocol gohadoop.AuthProtocol = gohadoop.AUTH_PROTOCOL_NONE
+		var authProtocol common.AuthProtocol = common.AUTH_PROTOCOL_NONE
 
 		if _, found := findUsableTokenForService(c.ServerAddress); found {
-			log.Printf("found token for service: %s", c.ServerAddress)
-			authProtocol = gohadoop.AUTH_PROTOCOL_SASL
+			log.Info("found token for service: %s", c.ServerAddress)
+			authProtocol = common.AUTH_PROTOCOL_SASL
 		}
 
 		writeConnectionHeader(con, authProtocol)
 
-		if authProtocol == gohadoop.AUTH_PROTOCOL_SASL {
-			log.Println("attempting SASL negotiation.")
+		if authProtocol == common.AUTH_PROTOCOL_SASL {
+			log.Info("attempting SASL negotiation.")
 
 			if err = negotiateSimpleTokenAuth(c, con); err != nil {
-				log.Fatal("failed to complete SASL negotiation!")
+				log.Error("failed to complete SASL negotiation!")
 				return nil, err
 			}
 
 		} else {
-			log.Println("no usable tokens. proceeding without auth.")
+			log.Info("no usable tokens. proceeding without auth.")
 		}
 
 		writeConnectionContext(c, con, connectionId, authProtocol)
@@ -149,13 +150,17 @@ func getConnection(c *Client, connectionId *connection_id) (*connection, error) 
 }
 
 func setupConnection(c *Client) (*connection, error) {
-	addr, _ := net.ResolveTCPAddr("tcp", c.ServerAddress)
+	addr, err := net.ResolveTCPAddr("tcp", c.ServerAddress)
+	if err != nil {
+		log.Error("error: ", err)
+		return nil, err
+	}
 	tcpConn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		log.Println("error: ", err)
+		log.Error("error: ", err)
 		return nil, err
 	} else {
-		log.Println("Successfully connected ", c)
+		log.Info("Successfully connected ", c)
 	}
 
 	// TODO: Ping thread
@@ -166,43 +171,43 @@ func setupConnection(c *Client) (*connection, error) {
 	return &connection{tcpConn}, nil
 }
 
-func writeConnectionHeader(conn *connection, authProtocol gohadoop.AuthProtocol) error {
+func writeConnectionHeader(conn *connection, authProtocol common.AuthProtocol) error {
 	// RPC_HEADER
-	if _, err := conn.con.Write(gohadoop.RPC_HEADER); err != nil {
-		log.Fatal("conn.Write gohadoop.RPC_HEADER", err)
+	if _, err := conn.con.Write(common.RPC_HEADER); err != nil {
+		log.Error("conn.Write gohadoop.RPC_HEADER", err)
 		return err
 	}
 
 	// RPC_VERSION
-	if _, err := conn.con.Write(gohadoop.VERSION); err != nil {
-		log.Fatal("conn.Write gohadoop.VERSION", err)
+	if _, err := conn.con.Write(common.VERSION); err != nil {
+		log.Error("conn.Write gohadoop.VERSION", err)
 		return err
 	}
 
 	// RPC_SERVICE_CLASS
-	if serviceClass, err := gohadoop.ConvertFixedToBytes(gohadoop.RPC_SERVICE_CLASS); err != nil {
-		log.Fatal("binary.Write", err)
+	if serviceClass, err := common.ConvertFixedToBytes(common.RPC_SERVICE_CLASS); err != nil {
+		log.Error("binary.Write", err)
 		return err
 	} else if _, err := conn.con.Write(serviceClass); err != nil {
-		log.Fatal("conn.Write RPC_SERVICE_CLASS", err)
+		log.Error("conn.Write RPC_SERVICE_CLASS", err)
 		return err
 	}
 
 	// AuthProtocol
-	if authProtocolBytes, err := gohadoop.ConvertFixedToBytes(authProtocol); err != nil {
-		log.Fatal("WTF AUTH_PROTOCOL", err)
+	if authProtocolBytes, err := common.ConvertFixedToBytes(authProtocol); err != nil {
+		log.Error("WTF AUTH_PROTOCOL", err)
 		return err
 	} else if _, err := conn.con.Write(authProtocolBytes); err != nil {
-		log.Fatal("conn.Write gohadoop.AUTH_PROTOCOL", err)
+		log.Error("conn.Write gohadoop.AUTH_PROTOCOL", err)
 		return err
 	}
 
 	return nil
 }
 
-func writeConnectionContext(c *Client, conn *connection, connectionId *connection_id, authProtocol gohadoop.AuthProtocol) error {
+func writeConnectionContext(c *Client, conn *connection, connectionId *connection_id, authProtocol common.AuthProtocol) error {
 	// Create hadoop_common.IpcConnectionContextProto
-	ugi, _ := gohadoop.CreateSimpleUGIProto()
+	ugi, _ := common.CreateSimpleUGIProto()
 	ipcCtxProto := hadoop_common.IpcConnectionContextProto{UserInfo: ugi, Protocol: &connectionId.protocol}
 
 	// Create RpcRequestHeaderProto
@@ -213,38 +218,38 @@ func writeConnectionContext(c *Client, conn *connection, connectionId *connectio
 	  callId = SASL_RPC_CALL_ID
 	}*/
 
-	rpcReqHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &gohadoop.RPC_PROTOCOL_BUFFFER, RpcOp: &gohadoop.RPC_FINAL_PACKET, CallId: &callId, ClientId: clientId[0:16], RetryCount: &gohadoop.RPC_DEFAULT_RETRY_COUNT}
+	rpcReqHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &common.RPC_PROTOCOL_BUFFFER, RpcOp: &common.RPC_FINAL_PACKET, CallId: &callId, ClientId: clientId[0:16], RetryCount: &common.RPC_DEFAULT_RETRY_COUNT}
 
 	rpcReqHeaderProtoBytes, err := proto.Marshal(&rpcReqHeaderProto)
 	if err != nil {
-		log.Fatal("proto.Marshal(&rpcReqHeaderProto)", err)
+		log.Error("proto.Marshal(&rpcReqHeaderProto)", err)
 		return err
 	}
 
 	ipcCtxProtoBytes, _ := proto.Marshal(&ipcCtxProto)
 	if err != nil {
-		log.Fatal("proto.Marshal(&ipcCtxProto)", err)
+		log.Error("proto.Marshal(&ipcCtxProto)", err)
 		return err
 	}
 
 	totalLength := len(rpcReqHeaderProtoBytes) + sizeVarint(len(rpcReqHeaderProtoBytes)) + len(ipcCtxProtoBytes) + sizeVarint(len(ipcCtxProtoBytes))
 	var tLen int32 = int32(totalLength)
-	totalLengthBytes, err := gohadoop.ConvertFixedToBytes(tLen)
+	totalLengthBytes, err := common.ConvertFixedToBytes(tLen)
 
 	if err != nil {
-		log.Fatal("ConvertFixedToBytes(totalLength)", err)
+		log.Error("ConvertFixedToBytes(totalLength)", err)
 		return err
 	} else if _, err := conn.con.Write(totalLengthBytes); err != nil {
-		log.Fatal("conn.con.Write(totalLengthBytes)", err)
+		log.Error("conn.con.Write(totalLengthBytes)", err)
 		return err
 	}
 
 	if err := writeDelimitedBytes(conn, rpcReqHeaderProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, rpcReqHeaderProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, rpcReqHeaderProtoBytes)", err)
 		return err
 	}
 	if err := writeDelimitedBytes(conn, ipcCtxProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, ipcCtxProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, ipcCtxProtoBytes)", err)
 		return err
 	}
 
@@ -263,14 +268,14 @@ func sizeVarint(x int) (n int) {
 }
 
 func sendRequest(c *Client, conn *connection, rpcCall *call) error {
-	//log.Println("About to call RPC: ", rpcCall.procedure)
+	//log.Info("About to call RPC: ", rpcCall.procedure)
 
 	// 0. RpcRequestHeaderProto
 	var clientId [16]byte = [16]byte(*c.ClientId)
-	rpcReqHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &gohadoop.RPC_PROTOCOL_BUFFFER, RpcOp: &gohadoop.RPC_FINAL_PACKET, CallId: &rpcCall.callId, ClientId: clientId[0:16], RetryCount: &rpcCall.retryCount}
+	rpcReqHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &common.RPC_PROTOCOL_BUFFFER, RpcOp: &common.RPC_FINAL_PACKET, CallId: &rpcCall.callId, ClientId: clientId[0:16], RetryCount: &rpcCall.retryCount}
 	rpcReqHeaderProtoBytes, err := proto.Marshal(&rpcReqHeaderProto)
 	if err != nil {
-		log.Fatal("proto.Marshal(&rpcReqHeaderProto)", err)
+		log.Error("proto.Marshal(&rpcReqHeaderProto)", err)
 		return err
 	}
 
@@ -278,7 +283,7 @@ func sendRequest(c *Client, conn *connection, rpcCall *call) error {
 	requestHeaderProto := rpcCall.procedure
 	requestHeaderProtoBytes, err := proto.Marshal(requestHeaderProto)
 	if err != nil {
-		log.Fatal("proto.Marshal(&requestHeaderProto)", err)
+		log.Error("proto.Marshal(&requestHeaderProto)", err)
 		return err
 	}
 
@@ -286,36 +291,36 @@ func sendRequest(c *Client, conn *connection, rpcCall *call) error {
 	paramProto := rpcCall.request
 	paramProtoBytes, err := proto.Marshal(paramProto)
 	if err != nil {
-		log.Fatal("proto.Marshal(&paramProto)", err)
+		log.Error("proto.Marshal(&paramProto)", err)
 		return err
 	}
 
 	totalLength := len(rpcReqHeaderProtoBytes) + sizeVarint(len(rpcReqHeaderProtoBytes)) + len(requestHeaderProtoBytes) + sizeVarint(len(requestHeaderProtoBytes)) + len(paramProtoBytes) + sizeVarint(len(paramProtoBytes))
 	var tLen int32 = int32(totalLength)
-	if totalLengthBytes, err := gohadoop.ConvertFixedToBytes(tLen); err != nil {
-		log.Fatal("ConvertFixedToBytes(totalLength)", err)
+	if totalLengthBytes, err := common.ConvertFixedToBytes(tLen); err != nil {
+		log.Error("ConvertFixedToBytes(totalLength)", err)
 		return err
 	} else {
 		if _, err := conn.con.Write(totalLengthBytes); err != nil {
-			log.Fatal("conn.con.Write(totalLengthBytes)", err)
+			log.Error("conn.con.Write(totalLengthBytes)", err)
 			return err
 		}
 	}
 
 	if err := writeDelimitedBytes(conn, rpcReqHeaderProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, rpcReqHeaderProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, rpcReqHeaderProtoBytes)", err)
 		return err
 	}
 	if err := writeDelimitedBytes(conn, requestHeaderProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, requestHeaderProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, requestHeaderProtoBytes)", err)
 		return err
 	}
 	if err := writeDelimitedBytes(conn, paramProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, paramProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, paramProtoBytes)", err)
 		return err
 	}
 
-	//log.Println("Succesfully sent request of length: ", totalLength)
+	//log.Info("Succesfully sent request of length: ", totalLength)
 
 	return nil
 }
@@ -323,7 +328,7 @@ func sendRequest(c *Client, conn *connection, rpcCall *call) error {
 func writeDelimitedTo(conn *connection, msg proto.Message) error {
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
-		log.Fatal("proto.Marshal(msg)", err)
+		log.Error("proto.Marshal(msg)", err)
 		return err
 	}
 	return writeDelimitedBytes(conn, msgBytes)
@@ -331,11 +336,11 @@ func writeDelimitedTo(conn *connection, msg proto.Message) error {
 
 func writeDelimitedBytes(conn *connection, data []byte) error {
 	if _, err := conn.con.Write(proto.EncodeVarint(uint64(len(data)))); err != nil {
-		log.Fatal("conn.con.Write(proto.EncodeVarint(uint64(len(data))))", err)
+		log.Error("conn.con.Write(proto.EncodeVarint(uint64(len(data))))", err)
 		return err
 	}
 	if _, err := conn.con.Write(data); err != nil {
-		log.Fatal("conn.con.Write(data)", err)
+		log.Error("conn.con.Write(data)", err)
 		return err
 	}
 
@@ -347,12 +352,12 @@ func (c *Client) readResponse(conn *connection, rpcCall *call) error {
 	var totalLength int32 = -1
 	var totalLengthBytes [4]byte
 	if _, err := conn.con.Read(totalLengthBytes[0:4]); err != nil {
-		log.Fatal("conn.con.Read(totalLengthBytes)", err)
+		log.Error("conn.con.Read(totalLengthBytes)", err)
 		return err
 	}
 
-	if err := gohadoop.ConvertBytesToFixed(totalLengthBytes[0:4], &totalLength); err != nil {
-		log.Fatal("gohadoop.ConvertBytesToFixed(totalLengthBytes, &totalLength)", err)
+	if err := common.ConvertBytesToFixed(totalLengthBytes[0:4], &totalLength); err != nil {
+		log.Error("gohadoop.ConvertBytesToFixed(totalLengthBytes, &totalLength)", err)
 		return err
 	}
 
@@ -360,7 +365,6 @@ func (c *Client) readResponse(conn *connection, rpcCall *call) error {
 	remain := totalLength
 	tmp := make([]byte, 1024)
 	for remain > 0 {
-		println("xxxxxxxxxxxxxxxxxx")
 		n, err := conn.con.Read(tmp)
 		if err != nil {
 			return err
@@ -369,23 +373,19 @@ func (c *Client) readResponse(conn *connection, rpcCall *call) error {
 		responseBytes = append(responseBytes, tmp[:n]...)
 	}
 	
-	if _, err := conn.con.Read(responseBytes); err != nil {
-		log.Fatal("conn.con.Read(totalLengthBytes)", err)
-		return err
-	}
 
 	// Parse RpcResponseHeaderProto
 	rpcResponseHeaderProto := hadoop_common.RpcResponseHeaderProto{}
 	off, err := readDelimited(responseBytes[0:totalLength], &rpcResponseHeaderProto)
 	if err != nil {
-		log.Fatal("readDelimited(responseBytes, rpcResponseHeaderProto)", err)
+		log.Error("readDelimited(responseBytes, rpcResponseHeaderProto)", err)
 		return err
 	}
-	//log.Println("Received rpcResponseHeaderProto = ", rpcResponseHeaderProto)
+	//log.Info("Received rpcResponseHeaderProto = ", rpcResponseHeaderProto)
 
 	err = c.checkRpcHeader(&rpcResponseHeaderProto)
 	if err != nil {
-		log.Fatal("c.checkRpcHeader failed", err)
+		log.Error("c.checkRpcHeader failed", err)
 		return err
 	}
 
@@ -393,7 +393,7 @@ func (c *Client) readResponse(conn *connection, rpcCall *call) error {
 		// Parse RpcResponseWrapper
 		_, err = readDelimited(responseBytes[off:], rpcCall.response)
 	} else {
-		log.Println("RPC failed with status: ", rpcResponseHeaderProto.Status.String())
+		log.Info("RPC failed with status: ", rpcResponseHeaderProto.Status.String())
 		errorDetails := [4]string{rpcResponseHeaderProto.Status.String(), "ServerDidNotSetExceptionClassName", "ServerDidNotSetErrorMsg", "ServerDidNotSetErrorDetail"}
 		if rpcResponseHeaderProto.ExceptionClassName != nil {
 			errorDetails[0] = *rpcResponseHeaderProto.ExceptionClassName
@@ -412,12 +412,12 @@ func (c *Client) readResponse(conn *connection, rpcCall *call) error {
 func readDelimited(rawData []byte, msg proto.Message) (int, error) {
 	headerLength, off := proto.DecodeVarint(rawData)
 	if off == 0 {
-		log.Fatal("proto.DecodeVarint(rawData) returned zero")
+		log.Error("proto.DecodeVarint(rawData) returned zero")
 		return -1, nil
 	}
 	err := proto.Unmarshal(rawData[off:off+int(headerLength)], msg)
 	if err != nil {
-		log.Fatal("proto.Unmarshal(rawData[off:off+headerLength]) ", err)
+		log.Error("proto.Unmarshal(rawData[off:off+headerLength]) ", err)
 		return -1, err
 	}
 
@@ -429,7 +429,7 @@ func (c *Client) checkRpcHeader(rpcResponseHeaderProto *hadoop_common.RpcRespons
 	var headerClientId []byte = []byte(rpcResponseHeaderProto.ClientId)
 	if rpcResponseHeaderProto.ClientId != nil {
 		if !bytes.Equal(callClientId[0:16], headerClientId[0:16]) {
-			log.Fatal("Incorrect clientId: ", headerClientId)
+			log.Error("Incorrect clientId: ", headerClientId)
 			return errors.New("Incorrect clientId")
 		}
 	}
@@ -437,8 +437,8 @@ func (c *Client) checkRpcHeader(rpcResponseHeaderProto *hadoop_common.RpcRespons
 }
 
 func sendSaslMessage(c *Client, conn *connection, message *hadoop_common.RpcSaslProto) error {
-	saslRpcHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &gohadoop.RPC_PROTOCOL_BUFFFER,
-		RpcOp:      &gohadoop.RPC_FINAL_PACKET,
+	saslRpcHeaderProto := hadoop_common.RpcRequestHeaderProto{RpcKind: &common.RPC_PROTOCOL_BUFFFER,
+		RpcOp:      &common.RPC_FINAL_PACKET,
 		CallId:     &SASL_RPC_CALL_ID,
 		ClientId:   SASL_RPC_DUMMY_CLIENT_ID,
 		RetryCount: &SASL_RPC_INVALID_RETRY_COUNT}
@@ -446,35 +446,35 @@ func sendSaslMessage(c *Client, conn *connection, message *hadoop_common.RpcSasl
 	saslRpcHeaderProtoBytes, err := proto.Marshal(&saslRpcHeaderProto)
 
 	if err != nil {
-		log.Fatal("proto.Marshal(&saslRpcHeaderProto)", err)
+		log.Error("proto.Marshal(&saslRpcHeaderProto)", err)
 		return err
 	}
 
 	saslRpcMessageProtoBytes, err := proto.Marshal(message)
 
 	if err != nil {
-		log.Fatal("proto.Marshal(saslMessage)", err)
+		log.Error("proto.Marshal(saslMessage)", err)
 		return err
 	}
 
 	totalLength := len(saslRpcHeaderProtoBytes) + sizeVarint(len(saslRpcHeaderProtoBytes)) + len(saslRpcMessageProtoBytes) + sizeVarint(len(saslRpcMessageProtoBytes))
 	var tLen int32 = int32(totalLength)
 
-	if totalLengthBytes, err := gohadoop.ConvertFixedToBytes(tLen); err != nil {
-		log.Fatal("ConvertFixedToBytes(totalLength)", err)
+	if totalLengthBytes, err := common.ConvertFixedToBytes(tLen); err != nil {
+		log.Error("ConvertFixedToBytes(totalLength)", err)
 		return err
 	} else {
 		if _, err := conn.con.Write(totalLengthBytes); err != nil {
-			log.Fatal("conn.con.Write(totalLengthBytes)", err)
+			log.Error("conn.con.Write(totalLengthBytes)", err)
 			return err
 		}
 	}
 	if err := writeDelimitedBytes(conn, saslRpcHeaderProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, saslRpcHeaderProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, saslRpcHeaderProtoBytes)", err)
 		return err
 	}
 	if err := writeDelimitedBytes(conn, saslRpcMessageProtoBytes); err != nil {
-		log.Fatal("writeDelimitedBytes(conn, saslRpcMessageProtoBytes)", err)
+		log.Error("writeDelimitedBytes(conn, saslRpcMessageProtoBytes)", err)
 		return err
 	}
 
@@ -487,18 +487,18 @@ func receiveSaslMessage(c *Client, conn *connection) (*hadoop_common.RpcSaslProt
 	var totalLengthBytes [4]byte
 
 	if _, err := conn.con.Read(totalLengthBytes[0:4]); err != nil {
-		log.Fatal("conn.con.Read(totalLengthBytes)", err)
+		log.Error("conn.con.Read(totalLengthBytes)", err)
 		return nil, err
 	}
-	if err := gohadoop.ConvertBytesToFixed(totalLengthBytes[0:4], &totalLength); err != nil {
-		log.Fatal("gohadoop.ConvertBytesToFixed(totalLengthBytes, &totalLength)", err)
+	if err := common.ConvertBytesToFixed(totalLengthBytes[0:4], &totalLength); err != nil {
+		log.Error("gohadoop.ConvertBytesToFixed(totalLengthBytes, &totalLength)", err)
 		return nil, err
 	}
 
 	var responseBytes []byte = make([]byte, totalLength)
 
 	if _, err := conn.con.Read(responseBytes); err != nil {
-		log.Fatal("conn.con.Read(totalLengthBytes)", err)
+		log.Error("conn.con.Read(totalLengthBytes)", err)
 		return nil, err
 	}
 
@@ -506,13 +506,13 @@ func receiveSaslMessage(c *Client, conn *connection) (*hadoop_common.RpcSaslProt
 	rpcResponseHeaderProto := hadoop_common.RpcResponseHeaderProto{}
 	off, err := readDelimited(responseBytes[0:totalLength], &rpcResponseHeaderProto)
 	if err != nil {
-		log.Fatal("readDelimited(responseBytes, rpcResponseHeaderProto)", err)
+		log.Error("readDelimited(responseBytes, rpcResponseHeaderProto)", err)
 		return nil, err
 	}
 
 	err = checkSaslRpcHeader(&rpcResponseHeaderProto)
 	if err != nil {
-		log.Fatal("checkSaslRpcHeader failed", err)
+		log.Error("checkSaslRpcHeader failed", err)
 		return nil, err
 	}
 
@@ -521,13 +521,13 @@ func receiveSaslMessage(c *Client, conn *connection) (*hadoop_common.RpcSaslProt
 	if *rpcResponseHeaderProto.Status == hadoop_common.RpcResponseHeaderProto_SUCCESS {
 		// Parse RpcResponseWrapper
 		if _, err = readDelimited(responseBytes[off:], &saslRpcMessage); err != nil {
-			log.Fatal("failed to read sasl response!")
+			log.Error("failed to read sasl response!")
 			return nil, err
 		} else {
 			return &saslRpcMessage, nil
 		}
 	} else {
-		log.Println("RPC failed with status: ", rpcResponseHeaderProto.Status.String())
+		log.Info("RPC failed with status: ", rpcResponseHeaderProto.Status.String())
 		errorDetails := [4]string{rpcResponseHeaderProto.Status.String(), "ServerDidNotSetExceptionClassName", "ServerDidNotSetErrorMsg", "ServerDidNotSetErrorDetail"}
 		if rpcResponseHeaderProto.ExceptionClassName != nil {
 			errorDetails[0] = *rpcResponseHeaderProto.ExceptionClassName
@@ -547,7 +547,7 @@ func checkSaslRpcHeader(rpcResponseHeaderProto *hadoop_common.RpcResponseHeaderP
 	var headerClientId []byte = []byte(rpcResponseHeaderProto.ClientId)
 	if rpcResponseHeaderProto.ClientId != nil {
 		if !bytes.Equal(SASL_RPC_DUMMY_CLIENT_ID, headerClientId) {
-			log.Fatal("Incorrect clientId: ", headerClientId)
+			log.Error("Incorrect clientId: ", headerClientId)
 			return errors.New("Incorrect clientId")
 		}
 	}
@@ -562,20 +562,20 @@ func negotiateSimpleTokenAuth(client *Client, con *connection) error {
 
 	//send a SASL negotiation request
 	if err = sendSaslMessage(client, con, &saslNegotiateMessage); err != nil {
-		log.Fatal("failed to send SASL NEGOTIATE message!")
+		log.Error("failed to send SASL NEGOTIATE message!")
 		return err
 	}
 
 	//get a response with supported mehcanisms/challenge
 	if saslResponseMessage, err = receiveSaslMessage(client, con); err != nil {
-		log.Fatal("failed to receive SASL NEGOTIATE response!")
+		log.Error("failed to receive SASL NEGOTIATE response!")
 		return err
 	}
 
 	var auths []*hadoop_common.RpcSaslProto_SaslAuth = saslResponseMessage.GetAuths()
 
 	if numAuths := len(auths); numAuths <= 0 {
-		log.Fatal("No supported auth mechanisms!")
+		log.Error("No supported auth mechanisms!")
 		return errors.New("No supported auth mechanisms!")
 	}
 
@@ -584,7 +584,7 @@ func negotiateSimpleTokenAuth(client *Client, con *connection) error {
 	var auth *hadoop_common.RpcSaslProto_SaslAuth = auths[0]
 
 	if !(auth.GetMethod() == "TOKEN" && auth.GetMechanism() == "DIGEST-MD5") {
-		log.Fatal("gohadoop only supports TOKEN/DIGEST-MD5 auth!")
+		log.Error("gohadoop only supports TOKEN/DIGEST-MD5 auth!")
 		return errors.New("gohadoop only supports TOKEN/DIGEST-MD5 auth!")
 	}
 
@@ -600,7 +600,7 @@ func negotiateSimpleTokenAuth(client *Client, con *connection) error {
 	response, err := security.GetDigestMD5ChallengeResponse(protocol, serverId, challenge, userToken)
 
 	if err != nil {
-		log.Fatal("failed to get challenge response! ", err)
+		log.Error("failed to get challenge response! ", err)
 		return err
 	}
 
@@ -613,22 +613,22 @@ func negotiateSimpleTokenAuth(client *Client, con *connection) error {
 
 	//send a SASL inititate request
 	if err = sendSaslMessage(client, con, &saslInitiateMessage); err != nil {
-		log.Fatal("failed to send SASL INITIATE message!")
+		log.Error("failed to send SASL INITIATE message!")
 		return err
 	}
 
 	//get a response with supported mehcanisms/challenge
 	if saslResponseMessage, err = receiveSaslMessage(client, con); err != nil {
-		log.Fatal("failed to read response to SASL INITIATE response!")
+		log.Error("failed to read response to SASL INITIATE response!")
 		return err
 	}
 
 	if saslResponseMessage.GetState() != hadoop_common.RpcSaslProto_SUCCESS {
-		log.Fatal("expected SASL SUCCESS response!")
+		log.Error("expected SASL SUCCESS response!")
 		return errors.New("expected SASL SUCCESS response!")
 	}
 
-	log.Println("Successfully completed SASL negotiation!")
+	log.Info("Successfully completed SASL negotiation!")
 
 	return nil //errors.New("abort here")
 }

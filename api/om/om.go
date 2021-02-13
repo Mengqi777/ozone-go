@@ -3,13 +3,11 @@ package om
 import (
 	"errors"
 	"github.com/mengqi777/ozone-go/api/common"
+	hadoop_ipc_client "github.com/mengqi777/ozone-go/api/gohadoop/hadoop_common/ipc/client"
 	"github.com/mengqi777/ozone-go/api/proto/hdds"
 	ozone_proto "github.com/mengqi777/ozone-go/api/proto/ozone"
-	"github.com/hortonworks/gohadoop"
-	hadoop_ipc_client "github.com/hortonworks/gohadoop/hadoop_common/ipc/client"
 	uuid "github.com/nu7hatch/gouuid"
-	"net"
-	"strconv"
+	log "github.com/wonderivan/logger"
 )
 
 var OM_PROTOCOL = "org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol"
@@ -17,16 +15,18 @@ var OM_PROTOCOL = "org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol"
 type OmClient struct {
 	OmHost   string
 	client   *hadoop_ipc_client.Client
-	clientId string
+	ClientId string
 }
 
 func CreateOmClient(omhost string) OmClient {
 	clientId, _ := uuid.NewV4()
-	ugi, _ := gohadoop.CreateSimpleUGIProto()
+	ugi, _ := common.CreateSimpleUGIProto()
+	//net.JoinHostPort(omhost, strconv.Itoa(common.DEFAULT_OMHOST_PORT))
 	c := &hadoop_ipc_client.Client{
 		ClientId:      clientId,
 		Ugi:           ugi,
-		ServerAddress: net.JoinHostPort(omhost, strconv.Itoa(9862))}
+		ServerAddress: omhost,
+	}
 
 	return OmClient{
 		OmHost: omhost,
@@ -45,11 +45,11 @@ func (om *OmClient) GetKey(volume string, bucket string, key string) (*ozone_pro
 		KeyArgs: keyArgs,
 	}
 
-	requestType := ozone_proto.Type_LookupKey
+	cmdType := ozone_proto.Type_LookupKey
 	wrapperRequest := ozone_proto.OMRequest{
-		CmdType:          &requestType,
+		CmdType:          &cmdType,
 		LookupKeyRequest: &req,
-		ClientId:         &om.clientId,
+		ClientId:         &om.ClientId,
 	}
 
 	resp, err := om.submitRequest(&wrapperRequest)
@@ -61,12 +61,12 @@ func (om *OmClient) GetKey(volume string, bucket string, key string) (*ozone_pro
 	return keyProto, nil
 }
 
-func (om *OmClient) ListKeys(volume string, bucket string) ([]*ozone_proto.KeyInfo, error) {
-	return om.ListKeysPrefix(volume, bucket, "")
+func (om *OmClient) ListKeys(volume string, bucket string, prefix string, startKey string) ([]*ozone_proto.KeyInfo, error) {
+	return om.ListKeysPrefix(volume, bucket, prefix, startKey)
 
 }
 
-func (om *OmClient) AllocateBlock(volume string, bucket string, key string, clientID *uint64) (*ozone_proto.AllocateBlockResponse,error) {
+func (om *OmClient) AllocateBlock(volume string, bucket string, key string, clientID *uint64) (*ozone_proto.AllocateBlockResponse, error) {
 	req := ozone_proto.AllocateBlockRequest{
 		KeyArgs: &ozone_proto.KeyArgs{
 			VolumeName: &volume,
@@ -76,11 +76,11 @@ func (om *OmClient) AllocateBlock(volume string, bucket string, key string, clie
 		ClientID: clientID,
 	}
 
-	msgType := ozone_proto.Type_AllocateBlock
+	cmdType := ozone_proto.Type_AllocateBlock
 	wrapperRequest := ozone_proto.OMRequest{
-		CmdType:              &msgType,
+		CmdType:              &cmdType,
 		AllocateBlockRequest: &req,
-		ClientId:             &om.clientId,
+		ClientId:             &om.ClientId,
 	}
 	resp, err := om.submitRequest(&wrapperRequest)
 	if err != nil {
@@ -98,16 +98,42 @@ func (om *OmClient) CreateKey(volume string, bucket string, key string) (*ozone_
 		},
 	}
 
-	createKeys := ozone_proto.Type_CreateKey
+	cmdType := ozone_proto.Type_CreateKey
 	wrapperRequest := ozone_proto.OMRequest{
-		CmdType:          &createKeys,
+		CmdType:          &cmdType,
 		CreateKeyRequest: &req,
-		ClientId:         &om.clientId,
+		ClientId:         &om.ClientId,
 	}
 	resp, err := om.submitRequest(&wrapperRequest)
 	if err != nil {
 		return nil, err
 	}
+
+	return resp.CreateKeyResponse, nil
+}
+
+func (om *OmClient) CreateKeyRaft(volume string, bucket string, key string) (*ozone_proto.CreateKeyResponse, error) {
+	req := ozone_proto.CreateKeyRequest{
+		KeyArgs: &ozone_proto.KeyArgs{
+			VolumeName:         &volume,
+			BucketName:         &bucket,
+			KeyName:            &key,
+			Type:               hdds.ReplicationType_RATIS.Enum(),
+			Factor:             hdds.ReplicationFactor_THREE.Enum(),
+		},
+	}
+
+	cmdType := ozone_proto.Type_CreateKey
+	wrapperRequest := ozone_proto.OMRequest{
+		CmdType:          &cmdType,
+		CreateKeyRequest: &req,
+		ClientId:         &om.ClientId,
+	}
+	resp, err := om.submitRequest(&wrapperRequest)
+	if err != nil {
+		return nil, err
+	}
+
 	return resp.CreateKeyResponse, nil
 }
 
@@ -127,11 +153,11 @@ func (om *OmClient) CommitKey(volume string, bucket string, key string, id *uint
 		ClientID: id,
 	}
 
-	messageType := ozone_proto.Type_CommitKey
+	cmdType := ozone_proto.Type_CommitKey
 	wrapperRequest := ozone_proto.OMRequest{
-		CmdType:          &messageType,
+		CmdType:          &cmdType,
 		CommitKeyRequest: &req,
-		ClientId:         &om.clientId,
+		ClientId:         &om.ClientId,
 	}
 	_, err := om.submitRequest(&wrapperRequest)
 	if err != nil {
@@ -141,20 +167,52 @@ func (om *OmClient) CommitKey(volume string, bucket string, key string, id *uint
 	return common.Key{}, nil
 }
 
-func (om *OmClient) ListKeysPrefix(volume string, bucket string, prefix string) ([]*ozone_proto.KeyInfo, error) {
+func (om *OmClient) CommitKeyRaft(volume string, bucket string, key string, id *uint64, keyLocations []*ozone_proto.KeyLocation, size uint64) (common.Key, error) {
+	three := hdds.ReplicationFactor_THREE
+	ratis := hdds.ReplicationType_RATIS
+	req := ozone_proto.CommitKeyRequest{
+		KeyArgs: &ozone_proto.KeyArgs{
+			VolumeName:   &volume,
+			BucketName:   &bucket,
+			KeyName:      &key,
+			KeyLocations: keyLocations,
+			DataSize:     &size,
+			Factor:       &three,
+			Type:         &ratis,
+		},
+		ClientID: id,
+	}
+
+	cmdType := ozone_proto.Type_CommitKey
+	wrapperRequest := ozone_proto.OMRequest{
+		CmdType:          &cmdType,
+		CommitKeyRequest: &req,
+		ClientId:         &om.ClientId,
+	}
+	_, err := om.submitRequest(&wrapperRequest)
+
+	if err != nil {
+		return common.Key{}, err
+	}
+
+	return common.Key{}, nil
+}
+
+func (om *OmClient) ListKeysPrefix(volume string, bucket string, prefix string, startKey string) ([]*ozone_proto.KeyInfo, error) {
 
 	req := ozone_proto.ListKeysRequest{
 		VolumeName: &volume,
 		BucketName: &bucket,
+		StartKey:   ptr(startKey),
 		Prefix:     ptr(prefix),
 		Count:      ptri(1000),
 	}
 
-	listKeys := ozone_proto.Type_ListKeys
+	cmdType := ozone_proto.Type_ListKeys
 	wrapperRequest := ozone_proto.OMRequest{
-		CmdType:         &listKeys,
+		CmdType:         &cmdType,
 		ListKeysRequest: &req,
-		ClientId:        &om.clientId,
+		ClientId:        &om.ClientId,
 	}
 
 	resp, err := om.submitRequest(&wrapperRequest)
@@ -164,6 +222,85 @@ func (om *OmClient) ListKeysPrefix(volume string, bucket string, prefix string) 
 
 	return resp.GetListKeysResponse().GetKeyInfo(), nil
 }
+
+func (om *OmClient) DeleteKey(v string, b string, k string) error {
+	keyArgs := &ozone_proto.KeyArgs{
+		VolumeName: ptr(v),
+		BucketName: ptr(b),
+		KeyName:    ptr(k),
+	}
+	req := ozone_proto.DeleteKeyRequest{
+		KeyArgs: keyArgs,
+	}
+
+	cmdType := ozone_proto.Type_DeleteKey
+	wrapperRequest := ozone_proto.OMRequest{
+		CmdType:          &cmdType,
+		DeleteKeyRequest: &req,
+		ClientId:         &om.ClientId,
+	}
+
+	resp, err := om.submitRequest(&wrapperRequest)
+	if err != nil {
+		log.Error(resp.String())
+		return err
+	}
+	return nil
+}
+
+func (om *OmClient) DeleteKeys(v string, b string, keys []string) error {
+
+	deleteKeys:=&ozone_proto.DeleteKeyArgs{
+		VolumeName: ptr(v),
+		BucketName: ptr(b),
+		Keys:       keys,
+	}
+	req := ozone_proto.DeleteKeysRequest{
+		DeleteKeys: deleteKeys,
+	}
+
+	cmdType := ozone_proto.Type_DeleteKeys
+	wrapperRequest := ozone_proto.OMRequest{
+		CmdType:          &cmdType,
+		DeleteKeysRequest: &req,
+		ClientId:         &om.ClientId,
+	}
+
+	resp, err := om.submitRequest(&wrapperRequest)
+	if err != nil {
+		log.Error(resp.String())
+		return err
+	}
+	return nil
+}
+
+
+func (om *OmClient) Rename(v,b,fromKey,toKey string) error {
+	req:=ozone_proto.RenameKeyRequest{
+		KeyArgs:   &ozone_proto.KeyArgs{
+			VolumeName:         ptr(v),
+			BucketName:         ptr(b),
+			KeyName:            ptr(fromKey),
+		},
+		ToKeyName: ptr(toKey),
+	}
+
+
+	cmdType := ozone_proto.Type_RenameKey
+	wrapperRequest := ozone_proto.OMRequest{
+		CmdType:          &cmdType,
+		RenameKeyRequest: &req,
+		ClientId:         &om.ClientId,
+	}
+
+	resp, err := om.submitRequest(&wrapperRequest)
+	if err != nil {
+		log.Error(resp.String())
+		return err
+	}
+	return nil
+}
+
 
 func getRpcPort(ports []*hdds.Port) uint32 {
 	for _, port := range ports {
@@ -184,7 +321,7 @@ func ptr(s string) *string {
 
 func (om *OmClient) submitRequest(request *ozone_proto.OMRequest, ) (*ozone_proto.OMResponse, error) {
 	wrapperResponse := ozone_proto.OMResponse{}
-	err := om.client.Call(gohadoop.GetCalleeRPCRequestHeaderProto(&OM_PROTOCOL), request, &wrapperResponse)
+	err := om.client.Call(common.GetCalleeRPCRequestHeaderProto(&OM_PROTOCOL), request, &wrapperResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -193,3 +330,4 @@ func (om *OmClient) submitRequest(request *ozone_proto.OMRequest, ) (*ozone_prot
 	}
 	return &wrapperResponse, nil
 }
+

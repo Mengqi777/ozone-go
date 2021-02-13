@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
-
 
 func Uint64toBytes(b []byte, v uint64) {
 	binary.LittleEndian.PutUint64(b, v)
@@ -197,3 +197,35 @@ func ComputeEndPos(remain uint64, writtenLen uint64, capacity uint64, endPos uin
 	}
 	return endPos
 }
+
+func ParseTimeFromMills(mills int64) string{
+	cTime := time.Unix(0, mills*int64(time.Millisecond))
+	s := cTime.Format("2006-01-02T15:04:05.000Z")
+	return s
+}
+
+
+func FormatBytesToHuman(i uint64) string {
+	switch {
+	case i > (1024 * 1024 * 1024 * 1024):
+		return fmt.Sprintf("%#.1fT", float64(i)/1024/1024/1024/1024)
+	case i > (1024 * 1024 * 1024):
+		return fmt.Sprintf("%#.1fG", float64(i)/1024/1024/1024)
+	case i > (1024 * 1024):
+		return fmt.Sprintf("%#.1fM", float64(i)/1024/1024)
+	case i > 1024:
+		return fmt.Sprintf("%#.1fK", float64(i)/1024)
+	default:
+		return fmt.Sprintf("%dB", i)
+	}
+}
+
+
+func Ptri(i uint64) *uint64 {
+	return &i
+}
+
+func Ptr(s string) *string {
+	return &s
+}
+

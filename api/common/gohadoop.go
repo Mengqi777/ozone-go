@@ -1,8 +1,9 @@
-package gohadoop
+package common
 
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/mengqi777/ozone-go/api/gohadoop/hadoop_common"
 	"log"
 	"os/user"
 	"runtime"
@@ -15,7 +16,7 @@ var (
 	VERSION           []byte = []byte{0x09}
 	RPC_SERVICE_CLASS byte   = 0x00
 
-	RPC_PROTOCOL_BUFFFER    RpcKindProto                         = hadoop_common.RpcKindProto_RPC_PROTOCOL_BUFFER
+	RPC_PROTOCOL_BUFFFER    hadoop_common.RpcKindProto                         = hadoop_common.RpcKindProto_RPC_PROTOCOL_BUFFER
 	RPC_FINAL_PACKET        hadoop_common.RpcRequestHeaderProto_OperationProto = hadoop_common.RpcRequestHeaderProto_RPC_FINAL_PACKET
 	RPC_DEFAULT_RETRY_COUNT int32                                              = hadoop_common.Default_RpcRequestHeaderProto_RetryCount
 	CLIENT_PROTOCOL_VERSION uint64                                             = 1

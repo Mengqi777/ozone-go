@@ -1,25 +1,25 @@
-# Go client for Apache Hadoop Ozone
+# Go cmdent for Apache Hadoop Ozone
 
-This repository contains an experimental, proof-of-concept golang client for apache hadoop ozone:
+This repository contains an experimental, proof-of-concept golang cmdent for apache hadoop ozone:
 
  * api: the location for the generic golang api
  * lib: sharable C library
- * cli: standalone executable tool
+ * cmd: standalone executable tool
 
 ** Highly experimental, most of the calls are not implemented. But it shows how can hadoop-rpc/grpc be used from golang.
 
-## Testing with cli:
+## Testing with cmd:
 
 ```
-go run cli/ozone/main.go -om 127.0.0.1 volume create vol1
+go run cmd/ozone/main.go -om 127.0.0.1 volume create vol1
 ```
 
 Or you can install it:
 
 ```
-cd cli
+cd cmd
 go install ./...
-ozone -om 127.0.0.1 volume create vol1
+ozone -om 127.0.0.1:9862 volume create vol1
 ```
 
 ## Testing the python binding

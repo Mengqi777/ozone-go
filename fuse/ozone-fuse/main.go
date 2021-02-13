@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/mengqi777/ozone-go/api"
-
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
@@ -30,20 +29,20 @@ func (me *OzoneFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse
 			Mode: fuse.S_IFDIR | 0755,
 		}, fuse.OK
 	}
+	key, err := me.ozoneClient.InfoKey(false,me.Volume, me.Bucket, name)
 
-	key, err := me.ozoneClient.InfoKey(me.Volume, me.Bucket, name)
 	if err != nil {
 		fmt.Println("Error with getting key: " + name + " " + err.Error())
 		return nil, fuse.ENOENT
 	}
 
-	if len(key.Locations) > 1 {
+	if key.ReplicationFactor > 1 {
 		return &fuse.Attr{
 			Mode: fuse.S_IFDIR | 0755,
 		}, fuse.OK
 	}
 
-	if len(key.Locations) == 1 {
+	if key.ReplicationFactor == 1 {
 		return &fuse.Attr{
 			Mode: fuse.S_IFREG | 0644, Size: uint64(len(name))}, fuse.OK
 	}
@@ -53,7 +52,7 @@ func (me *OzoneFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse
 
 func (me *OzoneFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntry, code fuse.Status) {
 
-	keys, err := me.ozoneClient.ListKeysPrefix(me.Volume, me.Bucket, name)
+	keys, err := me.ozoneClient.ListKeysPrefix(false,me.Volume, me.Bucket, name)
 	if err != nil {
 		panic(err)
 	}
@@ -81,7 +80,7 @@ func (me *OzoneFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntr
 }
 
 func (me *OzoneFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, code fuse.Status) {
-	key, err := me.ozoneClient.InfoKey(me.Volume, me.Bucket, name)
+	key, err := me.ozoneClient.InfoKey(false,me.Volume, me.Bucket, name)
 	if err != nil {
 		return nil, fuse.EACCES
 	}

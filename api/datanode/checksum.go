@@ -1,9 +1,8 @@
-package common
+package datanode
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/gogo/protobuf/proto"
 	dnapi "github.com/mengqi777/ozone-go/api/proto/datanode"
 	"github.com/mengqi777/ozone-go/api/util/checksum"
 )
@@ -19,9 +18,10 @@ func newChecksumOperator(checksum *dnapi.ChecksumData) *ChecksumOperator {
 }
 
 func newChecksumOperatorComputer(checksumType *dnapi.ChecksumType, bytesPerChecksum uint32) *ChecksumOperator {
+	bps:=uint32(bytesPerChecksum)
 	return newChecksumOperator(&dnapi.ChecksumData{
 		Type:             checksumType,
-		BytesPerChecksum: proto.Uint32(bytesPerChecksum),
+		BytesPerChecksum: &bps,
 	})
 }
 
@@ -84,10 +84,10 @@ func (operator *ChecksumOperator) VerifyChecksum(data []byte, off uint64) error 
 		endIndex += 1
 	}
 
-	if endIndex > uint64(len(operator.Checksum.Checksums)) {
-		return fmt.Errorf("data to verify checksums from %v, len: %v is out off index of chunk checksums(%v), bytes per Checksum: %v",
-			off, len(data), len(operator.Checksum.Checksums), *operator.Checksum.BytesPerChecksum)
-	}
+	//if endIndex > uint64(len(operator.Checksum.Checksums)) {
+	//	return fmt.Errorf("data to verify checksums from %v, len: %v is out off index of chunk checksums(%v), bytes per Checksum: %v",
+	//		off, len(data), len(operator.Checksum.Checksums), *operator.Checksum.BytesPerChecksum)
+	//}
 
 	var cf checksumFunc
 	switch *operator.Checksum.Type {
@@ -112,7 +112,18 @@ func (operator *ChecksumOperator) VerifyChecksum(data []byte, off uint64) error 
 			byteEnd = uint32(len(data))
 		}
 
-		checksumBytes := cf(data[byteStart:byteEnd])
+		csm := cf(data[byteStart:byteEnd])
+		for i, j := 0, len(csm)-1; i < j; i, j = i+1, j-1 {
+			csm[i], csm[j] = csm[j], csm[i]
+		}
+		//var index = 0
+		//for idx, b := range csm {
+		//	if b != 0 {
+		//		index = idx
+		//		break
+		//	}
+		//}
+		checksumBytes := csm[4:]
 		if bytes.Compare(checksumBytes, operator.Checksum.Checksums[checkIndex]) != 0 {
 			return fmt.Errorf("ChecksumMismatchError ChecksumType %v checksumBytes %v CompareTo %v",
 				operator.Checksum.Type.String(), checksumBytes, operator.Checksum.Checksums[checkIndex])

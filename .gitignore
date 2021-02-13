@@ -2,3 +2,5 @@
 vendor
 ozone.so
 ozone.h
+cli/cli
+cmd/cmd

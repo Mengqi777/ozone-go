@@ -1,12 +1,18 @@
 package datanode
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
-	"github.com/mengqi777/ozone-go/api"
+	"github.com/mengqi777/ozone-go/api/common"
+	"github.com/mengqi777/ozone-go/api/om"
+	dnapi "github.com/mengqi777/ozone-go/api/proto/datanode"
+	"github.com/mengqi777/ozone-go/api/proto/hdds"
+	ozone_proto "github.com/mengqi777/ozone-go/api/proto/ozone"
+	"github.com/mengqi777/ozone-go/api/proto/ratis"
 	"github.com/mengqi777/ozone-go/api/util"
 	log "github.com/wonderivan/logger"
-	"os"
 )
 
 type flushStatus string
@@ -21,16 +27,18 @@ const (
 const maxRetryCount = 3
 
 type KeyWriter struct {
-	fileInfoOperator    *FileInfoOperator
-	ozoneClient         *api.OzoneClient
-	fsClient            *FSClient
-	fileName            string
-	path                string
-	size                uint64
-	checksumType        *hadoop_hdds_datanode.ChecksumType
+	OmClient *om.OmClient
+
+	volume string
+	bucket string
+	key    string
+
+	KeyInfo             *ozone_proto.KeyInfo
+	ID                  *uint64
+	dataSize            uint64
+	checksumType        dnapi.ChecksumType
 	bytesPerChecksum    uint32
 	chunkSize           uint64
-	chunkQueueSize      int
 	blockSize           uint64
 	writers             []*BlockWriter
 	currentIndex        int
@@ -38,74 +46,116 @@ type KeyWriter struct {
 	flushChunkBatchSize int
 }
 
-func (fw *KeyWriter) allocateBlockIfNeed() (int, *BlockWriter, error) {
-	index, _, err := fw.allocateBlock()
+func NewKeyWriter(length uint64, id *uint64, info *ozone_proto.KeyInfo, client *om.OmClient) *KeyWriter {
+	return &KeyWriter{
+		OmClient:     client,
+		volume:       info.GetVolumeName(),
+		bucket:       info.GetBucketName(),
+		key:          info.GetKeyName(),
+		KeyInfo:      info,
+		ID:           id,
+		dataSize:     length,
+		writers:      make([]*BlockWriter, 0),
+		currentIndex: -1,
+		closed:       false,
+
+		checksumType:        common.DEFAULT_CHECKSUM_TYPE,      //default
+		bytesPerChecksum:    common.DEFAULT_BYTES_PER_CHECKSUM, //default
+		chunkSize:           common.DEFAULT_CHUNK_SIZE,         //default
+		blockSize:           common.DEFAULT_BLOCK_SIZE,         //default
+		flushChunkBatchSize: common.DEFAULT_FLUSH_LENGTH,       //default
+	}
+}
+
+func (keyWriter *KeyWriter) init() error {
+	_, writer, err := keyWriter.addBlockLocation(keyWriter.KeyInfo.KeyLocationList[0].GetKeyLocations()[0])
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	writers := make([]BlockWriter, 0)
+	writers = append(writers, *writer)
+	keyWriter.currentIndex = 0
+	return nil
+}
+
+func (keyWriter *KeyWriter) allocateBlockIfNeed() (int, *BlockWriter, error) {
+	if keyWriter.currentIndex == 0 {
+		return keyWriter.currentIndex, keyWriter.writers[0], nil
+	}
+	index, _, err := keyWriter.allocateBlock()
 	if err != nil {
 		return -1, nil, err
 	}
-	fw.currentIndex = index
-
-
-	return fw.currentIndex, fw.writers[fw.currentIndex], nil
+	keyWriter.currentIndex = index
+	log.Debug("block index ", index)
+	return keyWriter.currentIndex, keyWriter.writers[keyWriter.currentIndex], nil
 
 }
 
-func (fw *KeyWriter) allocateBlock() (int, *BlockWriter, error) {
-
-	blockLocation, err := fw.fsClient.AllocateBlock(fw.path, nil)
+func (keyWriter *KeyWriter) allocateBlock() (int, *BlockWriter, error) {
+	blockLocation, err := keyWriter.OmClient.AllocateBlock(keyWriter.volume, keyWriter.bucket, keyWriter.key, keyWriter.ID)
 	if err != nil {
 		return 0, nil, err
 	}
-	index, writer, err := fw.addBlockLocation(blockLocation)
+	index, writer, err := keyWriter.addBlockLocation(blockLocation.GetKeyLocation())
 	return index, writer, err
 }
 
-func (fw *KeyWriter) addBlockLocation(blockLocation *hadoop_ozone.BlockLocation) (int, *BlockWriter, error) {
+func (keyWriter *KeyWriter) addBlockLocation(blockLocation *ozone_proto.KeyLocation) (int, *BlockWriter, error) {
 
-	next := len(fw.writers)
+	next := len(keyWriter.writers)
 
 	// Param: topology just same to ozone java client.
-	pipeline, _ := NewPipelineOperator(blockLocation.Pipeline, false)
-	log.Debug("AddBlockLocation pipeline: ", pipeline.GetPipeline().String())
-	dn := NewDatanodeClient(pipeline)
-	dn.callId = 0
-	writer := newBlockWriter(
-		BlockIdToDatanodeBlockId(blockLocation.BlockID),
-		fw.checksumType,
-		*blockLocation.Length,
-		fw.bytesPerChecksum,
-		fw.chunkSize,
-		fw.flushChunkBatchSize,
-		fw.chunkQueueSize,
-		dn,
-		pipeline,
-	)
-	fw.writers = append(fw.writers, writer)
-	if err := dn.connectToLeaderRatis(dn.leaderIp); err != nil {
+	dn  := CreateDatanodeClientRaft(blockLocation.Pipeline)
+
+	pipline, err := NewPipelineOperator(blockLocation.GetPipeline(), common.DEFAULT_TOPOLOGY_AWARE_READ)
+	if err != nil {
+		log.Error(err)
 		return 0, nil, err
 	}
-	dn.watch(0, ratis_common.ReplicationLevel_MAJORITY)
+	writer := newBlockWriter(
+		BlockIdToDatanodeBlockId(blockLocation.BlockID),
+		&keyWriter.checksumType,
+		*blockLocation.Length,
+		keyWriter.bytesPerChecksum,
+		keyWriter.chunkSize,
+		keyWriter.flushChunkBatchSize,
+		dn,
+		pipline,
+		blockLocation,
+	)
+
+	keyWriter.writers = append(keyWriter.writers, writer)
+	if err := dn.connectToLeaderRaft(writer.pipelineOperator.GetLeaderAddr(PipelinePortNameRATIS)); err != nil {
+		return 0, nil, err
+	}
+	dn.watch(0, ratis.ReplicationLevel_MAJORITY)
 	return next, writer, nil
 }
 
-func (fw *KeyWriter) Write(p []byte) (uint64, error) {
-
-	if fw.closed {
-		return 0, customerror.ErrClosedPipe
+func (keyWriter *KeyWriter) Write(p []byte) (uint64, error) {
+	if keyWriter.closed {
+		return 0, errors.New("closed error")
 	}
-	fw.size = uint64(len(p))
+	if err := keyWriter.init(); err != nil {
+		return 0, err
+	}
+
+	keyWriter.dataSize = uint64(len(p))
 	//flushedWriteLen:= uint64(0)
 	writtenLen := uint64(0)
 	remain := uint64(len(p))
 	endPos := uint64(0)
+	locations := make([]*ozone_proto.KeyLocation, 0)
 	for remain > 0 {
-		_, current, err := fw.allocateBlockIfNeed()
+		_, current, err := keyWriter.allocateBlockIfNeed()
 		if err != nil {
 			return 0, err
 		}
 
-		endPos = util.ComputeEndPos(remain, writtenLen, uint64(api.DEFAULT_BLOCK_SIZE), endPos)
-		log.Debug("file currentIndex", fw.currentIndex, " remain", remain, "writtenLen", writtenLen, "endPos", endPos)
+		endPos = util.ComputeEndPos(remain, writtenLen, common.DEFAULT_BLOCK_SIZE, endPos)
+		log.Debug("file currentIndex", keyWriter.currentIndex, " remain", remain, "writtenLen", writtenLen, "endPos", endPos)
 		n, err := current.Write(p[writtenLen:endPos])
 		writtenLen += n
 		remain -= n
@@ -114,7 +164,7 @@ func (fw *KeyWriter) Write(p []byte) (uint64, error) {
 		if err != nil {
 			continue
 		}
-
+		locations = append(locations, current.location)
 		//if err != nil && err != customerror.BufferErrFull {
 		//	log.Error("customerror.BufferErrFull", err)
 		//	return writtenLen, err
@@ -127,67 +177,36 @@ func (fw *KeyWriter) Write(p []byte) (uint64, error) {
 		//}
 	}
 
-	if err := fw.Close(); err != nil {
+	if err := keyWriter.Close(); err != nil {
 		log.Error("closed error", err)
 		return writtenLen, err
 	}
 
-	fw.complete()
+	keyWriter.OmClient.CommitKey(keyWriter.volume, keyWriter.bucket, keyWriter.key, keyWriter.ID, locations, keyWriter.dataSize)
 	return writtenLen, nil
 
 }
 
-func (fw *KeyWriter) Close() error {
-	if fw.closed {
-		return customerror.ErrClosedPipe
+func (keyWriter *KeyWriter) Close() error {
+	if keyWriter.closed {
+		return errors.New("error closed")
 	}
 
-	//err := fw.writers[fw.currentIndex].Close()
+	//err := keyWriter.writers[keyWriter.currentIndex].Close()
 
-	fw.closed = true
+	keyWriter.closed = true
 	return nil
 }
 
-func (fw *KeyWriter) complete() {
-	var blockLocations []*hadoop_ozone.BlockLocation
-	for _, writer := range fw.writers {
-		pipeline := writer.pipelineOperator.Pipeline
-		location := &hadoop_ozone.BlockLocation{
-			BlockID: &hadoop_hdds.BlockID{
-				ContainerBlockID: &hadoop_hdds.ContainerBlockID{
-					ContainerID: writer.blockId.ContainerID,
-					LocalID:     writer.blockId.LocalID,
-				},
-				BlockCommitSequenceId: writer.blockId.BlockCommitSequenceId,
-			},
-			Offset:               &writer.offset,
-			Length:               &writer.length,
-			CreateVersion:        nil,
-			Token:                nil,
-			Pipeline:             pipeline,
-			XXX_NoUnkeyedLiteral: struct{}{},
-			XXX_unrecognized:     nil,
-			XXX_sizecache:        0,
-		}
-		blockLocations = append(blockLocations, location)
-	}
-
-	err := fw.fsClient.CompleteFile(fw.path, blockLocations, fw.size)
-	if err != nil {
-		log.Error("Complete file error ", err)
-		os.Exit(1)
-	}
-}
-
 type BlockWriter struct {
-	blockId          *hadoop_hdds_datanode.DatanodeBlockID
-	blockData        *hadoop_hdds_datanode.BlockData
+	blockId          *dnapi.DatanodeBlockID
+	blockData        *dnapi.BlockData
 	dn               *DatanodeClient
 	pipelineOperator *PipelineOperator
 	blockSize        uint64
 	length           uint64
 	offset           uint64
-	checksumType     *hadoop_hdds_datanode.ChecksumType
+	checksumType     *dnapi.ChecksumType
 	bytesPerChecksum uint32
 	chunkSize        uint64
 	writers          []*ChunkWriter
@@ -197,17 +216,22 @@ type BlockWriter struct {
 	flushedIndex        int
 	currentIndex        int
 	closed              bool
+	location            *ozone_proto.KeyLocation
 }
 
-func newBlockWriter(blockId *hadoop_hdds_datanode.DatanodeBlockID, checksumType *hadoop_hdds_datanode.ChecksumType, blockSize uint64,
-	bytesPerChecksum uint32, chunkSize uint64, flushChunkBatchSize int, queueSize int, dn *DatanodeClient, pipeline *PipelineOperator) *BlockWriter {
+func newBlockWriter(blockId *dnapi.DatanodeBlockID, checksumType *dnapi.ChecksumType, blockSize uint64,
+	bytesPerChecksum uint32, chunkSize uint64, flushChunkBatchSize int, dn *DatanodeClient,
+	pipeline *PipelineOperator, blockLocation *ozone_proto.KeyLocation) *BlockWriter {
 
-	var metadata []*hadoop_hdds_datanode.KeyValue
-	metadata = append(metadata, &hadoop_hdds_datanode.KeyValue{Key: proto.String("TYPE"), Value: proto.String("KEY")})
-	blockData := &hadoop_hdds_datanode.BlockData{
+	var metadata []*dnapi.KeyValue
+
+	typ := "TYPE"
+	ky := "KEY"
+	metadata = append(metadata, &dnapi.KeyValue{Key: &typ, Value: &ky})
+	blockData := &dnapi.BlockData{
 		BlockID:  blockId,
 		Metadata: metadata,
-		Chunks:   make([]*hadoop_hdds_datanode.ChunkInfo, 0),
+		Chunks:   make([]*dnapi.ChunkInfo, 0),
 	}
 	return &BlockWriter{
 		blockId:             blockId,
@@ -225,6 +249,7 @@ func newBlockWriter(blockId *hadoop_hdds_datanode.DatanodeBlockID, checksumType 
 		flushedIndex:        -1,
 		currentIndex:        -1,
 		closed:              false,
+		location:            blockLocation,
 	}
 
 }
@@ -232,6 +257,7 @@ func newBlockWriter(blockId *hadoop_hdds_datanode.DatanodeBlockID, checksumType 
 func (bw *BlockWriter) allocateChunk() (int, *ChunkWriter) {
 	nextIndex := len(bw.writers)
 	chunkName := fmt.Sprintf("%d_chunk_%d", *bw.blockId.LocalID, nextIndex+1)
+	log.Debug("chunkName",chunkName)
 	writer := newChunkWriter(chunkName, bw.chunkSize, bw.blockId, bw.checksumType, bw.bytesPerChecksum, nextIndex, bw.dn)
 
 	bw.writers = append(bw.writers, writer)
@@ -242,25 +268,25 @@ func (bw *BlockWriter) allocateChunk() (int, *ChunkWriter) {
 
 func (bw *BlockWriter) currentWritableChunk() (int, *ChunkWriter) {
 
-	var current *ChunkWriter
+	var cw *ChunkWriter
 	if len(bw.writers) == 0 {
-		bw.currentIndex, current = bw.allocateChunk()
-		return bw.currentIndex, current
+		bw.currentIndex, cw = bw.allocateChunk()
+		return bw.currentIndex, cw
 	}
 
-	current = bw.writers[bw.currentIndex]
-	if !current.HasRemaining() {
-		bw.currentIndex, current = bw.allocateChunk()
-		return bw.currentIndex, current
+	cw = bw.writers[bw.currentIndex]
+	if !cw.HasRemaining() {
+		bw.currentIndex, cw = bw.allocateChunk()
+		return bw.currentIndex, cw
 	}
-	return bw.currentIndex, current
+	return bw.currentIndex, cw
 }
 
-func (bw *BlockWriter) BlockId() *hadoop_hdds_datanode.DatanodeBlockID {
+func (bw *BlockWriter) BlockId() *dnapi.DatanodeBlockID {
 	return bw.blockId
 }
 
-func (bw *BlockWriter) Pipeline() *hadoop_hdds.Pipeline {
+func (bw *BlockWriter) Pipeline() *hdds.Pipeline {
 	return bw.pipelineOperator.Pipeline
 }
 
@@ -284,7 +310,8 @@ func (bw *BlockWriter) Write(p []byte) (uint64, error) {
 		bw.length += uint64(n)
 		writtenLen += uint64(n)
 		remain -= uint64(n)
-		if err != nil && err != customerror.BufferErrFull {
+
+		if err != nil && err != bufio.ErrBufferFull {
 			return writtenLen, err
 		}
 
@@ -306,8 +333,8 @@ func (bw *BlockWriter) Write(p []byte) (uint64, error) {
 				return flushedWrittenLen, err
 			}
 			flushedWrittenLen = writtenLen
-			if err = bw.dn.watch(uint64(bw.flushedIndex), ratis_common.ReplicationLevel_ALL_COMMITTED); err != nil {
-				bw.dn.watch(uint64(bw.flushedIndex), ratis_common.ReplicationLevel_MAJORITY_COMMITTED)
+			if err = bw.dn.watch(uint64(bw.flushedIndex), ratis.ReplicationLevel_ALL_COMMITTED); err != nil {
+				bw.dn.watch(uint64(bw.flushedIndex), ratis.ReplicationLevel_MAJORITY_COMMITTED)
 			}
 		}
 		current.Close()
@@ -318,8 +345,8 @@ func (bw *BlockWriter) Write(p []byte) (uint64, error) {
 			return flushedWrittenLen, err
 		}
 		flushedWrittenLen = writtenLen
-		if err := bw.dn.watch(uint64(bw.flushedIndex), ratis_common.ReplicationLevel_ALL_COMMITTED); err != nil {
-			bw.dn.watch(uint64(bw.flushedIndex), ratis_common.ReplicationLevel_MAJORITY_COMMITTED)
+		if err := bw.dn.watch(uint64(bw.flushedIndex), ratis.ReplicationLevel_ALL_COMMITTED); err != nil {
+			bw.dn.watch(uint64(bw.flushedIndex), ratis.ReplicationLevel_MAJORITY_COMMITTED)
 		}
 	}
 
@@ -333,7 +360,7 @@ func (bw *BlockWriter) shouldFlush() bool {
 func (bw *BlockWriter) Close() error {
 
 	if bw.closed {
-		return customerror.ErrClosedPipe
+		return errors.New("error closed")
 	}
 
 	if bw.flushedMap[bw.currentIndex] == flushedInitStatus {
@@ -418,7 +445,7 @@ func (bw *BlockWriter) flushFailedChunk(containCurrent bool) error {
 	for i := start; i <= end; i++ {
 		switch bw.flushedMap[i] {
 		case flushedFailStatus:
-			log.Debug("flush fail chunk ", i, bw.writers[i].chunkInfo.ChunkName)
+			log.Debug("flush fail chunk ", i, bw.writers[i].chunkInfo.GetChunkName())
 			err = bw.writeChunkToContainerAsync(i)
 		case flushedSuccStatus:
 			// do nothing on succ
@@ -462,28 +489,29 @@ func (bw *BlockWriter) putBlockAsync(eof bool) error {
 
 func (bw *BlockWriter) putBlock(eof bool) error {
 
-	var chunks []*hadoop_hdds_datanode.ChunkInfo
+	var chunks []*dnapi.ChunkInfo
 	for _, writer := range bw.orderedFlushedChunks() {
 		chunks = append(chunks, writer.Info())
 	}
 	if len(chunks) == 0 {
 		return nil
 	}
+	typ := "TYPE"
+	ky := "KEY"
+	var metadata []*dnapi.KeyValue
+	metadata = append(metadata, &dnapi.KeyValue{Key: &typ, Value: &ky})
 
-	var metadata []*hadoop_hdds_datanode.KeyValue
-	metadata = append(metadata, &hadoop_hdds_datanode.KeyValue{Key: proto.String("TYPE"), Value: proto.String("KEY")})
-
-	blockData := &hadoop_hdds_datanode.BlockData{
+	blockData := &dnapi.BlockData{
 		BlockID:  bw.blockId,
 		Metadata: metadata,
 		Chunks:   chunks,
 	}
 
-	resp, _, err := bw.dn.PutBlock(blockData, eof)
+	resp, err := bw.dn.PutBlockRatis(blockData.BlockID, chunks)
 	if err != nil {
 		return err
 	}
-	bw.blockId = resp.CommittedBlockLength.BlockID
+	bw.blockId = resp.GetCommittedBlockLength.GetBlockID()
 	bw.blockData = blockData
 	if len(chunks) != 0 {
 		bw.flushedIndex = len(chunks) - 1
@@ -520,32 +548,34 @@ func (bw *BlockWriter) writeChunkToContainerAsync(writerIndex int) error {
 }
 
 type ChunkWriter struct {
-	blockId          *hadoop_hdds_datanode.DatanodeBlockID
-	checksumType     *hadoop_hdds_datanode.ChecksumType
-	chunkInfo        *hadoop_hdds_datanode.ChunkInfo
+	blockId          *dnapi.DatanodeBlockID
+	chunkInfo        *dnapi.ChunkInfo
+	data             []byte
 	bytesPerChecksum uint32
 	chunkSize        uint64
 	length           uint64
-	buffer           *limitBuffer
 	myIndex          int
+	buffer           *limitBuffer
 	dn               *DatanodeClient
 	closed           bool
 	written          bool
+	checksumType     *dnapi.ChecksumType
 }
 
-func newChunkWriter(chunkName string, chunkSize uint64, blockId *hadoop_hdds_datanode.DatanodeBlockID,
-	checksumType *hadoop_hdds_datanode.ChecksumType, bytesPerChecksum uint32, myIndex int, dn *DatanodeClient) *ChunkWriter {
+func newChunkWriter(chunkName string, chunkSize uint64, blockId *dnapi.DatanodeBlockID,
+	checksumType *dnapi.ChecksumType, bytesPerChecksum uint32, myIndex int, dn *DatanodeClient) *ChunkWriter {
 
-	chunkInfo := &hadoop_hdds_datanode.ChunkInfo{
-		ChunkName: proto.String(chunkName),
-		Offset:    proto.Uint64(0),
-		Len:       proto.Uint64(0),
+	chunkInfo := &dnapi.ChunkInfo{
+		ChunkName:    util.Ptr(chunkName),
+		Offset:       util.Ptri(0),
+		Len:          util.Ptri(0),
+		ChecksumData: nil,
 	}
 
 	return &ChunkWriter{
 		blockId:          blockId,
-		checksumType:     checksumType,
 		bytesPerChecksum: bytesPerChecksum,
+		checksumType:     checksumType,
 		chunkInfo:        chunkInfo,
 		chunkSize:        chunkSize,
 		length:           0,
@@ -556,23 +586,17 @@ func newChunkWriter(chunkName string, chunkSize uint64, blockId *hadoop_hdds_dat
 	}
 }
 
-func (cw *ChunkWriter) Info() *hadoop_hdds_datanode.ChunkInfo {
+func (cw *ChunkWriter) Info() *dnapi.ChunkInfo {
 	return cw.chunkInfo
-}
-
-func (cw *ChunkWriter) verifyBuffer() {
-	if cw.buffer == nil {
-		cw.buffer = newLimitBuffer(cw.chunkSize)
-	}
 }
 
 func (cw *ChunkWriter) checkWritable() error {
 	if cw.closed {
-		return customerror.ErrClosedPipe
+		return errors.New("error closed")
 	}
 
 	if cw.written {
-		return fmt.Errorf("chunk: %s has written to container", *cw.chunkInfo.ChunkName)
+		return fmt.Errorf("chunk: %s has written to container", cw.chunkInfo.GetChunkName())
 	}
 
 	cw.verifyBuffer()
@@ -593,7 +617,7 @@ func (cw *ChunkWriter) Write(p []byte) (n int, err error) {
 
 func (cw *ChunkWriter) Close() error {
 	if cw.closed {
-		return customerror.ErrClosedPipe
+		return errors.New("error closed")
 	}
 
 	if !cw.written {
@@ -605,7 +629,6 @@ func (cw *ChunkWriter) Close() error {
 	cw.written = true
 	cw.closed = true
 	// Clear buffer when writer is closed
-	cw.buffer = nil
 	return nil
 }
 
@@ -638,21 +661,27 @@ func (cw *ChunkWriter) WriteToContainer() error {
 	} else {
 		data = cw.buffer.Bytes()
 	}
-	checksum := newChecksumOperatorComputer(cw.checksumType, cw.bytesPerChecksum)
-	if err := checksum.ComputeChecksum(data); err != nil {
+	checksumOperator := newChecksumOperatorComputer(cw.checksumType,cw.bytesPerChecksum)
+	if err := checksumOperator.ComputeChecksum(data); err != nil {
 		return err
 	}
-	checksumData := checksum.Checksum
+	checksumData := checksumOperator.Checksum
 
 	cw.chunkInfo.ChecksumData = checksumData
 
-	cw.chunkInfo.Offset = proto.Uint64(uint64(cw.myIndex) * api.DEFAULT_CHUNK_SIZE)
+	cw.chunkInfo.Offset = util.Ptri(uint64(cw.myIndex) * common.DEFAULT_CHUNK_SIZE)
 	cw.chunkInfo.Len = &cw.length
 
-	_, _, err := cw.dn.WriteChunk(cw.blockId, cw.chunkInfo, data)
+	_, err := cw.dn.WriteChunkRaft(cw.blockId, cw.chunkInfo, data)
 
 	cw.written = err == nil
 	return err
+}
+
+func (cw *ChunkWriter) verifyBuffer() {
+	if cw.buffer == nil {
+		cw.buffer = newLimitBuffer(cw.chunkSize)
+	}
 }
 
 type limitBuffer struct {
@@ -668,7 +697,7 @@ func newLimitBuffer(limit uint64) *limitBuffer {
 
 func (lb *limitBuffer) Write(p []byte) (int, error) {
 	if !lb.HasRemaining() {
-		return 0, customerror.BufferErrFull
+		return 0, bufio.ErrBufferFull
 	}
 
 	remaining := lb.Remaining()
