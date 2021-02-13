@@ -16,190 +16,93 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"github.com/mengqi777/ozone-go/api"
-	"github.com/mengqi777/ozone-go/api/util"
 	"github.com/spf13/cobra"
-	osuser "os/user"
-
+	log "github.com/wonderivan/logger"
+	"os"
+	"path"
+	"strings"
 )
 
 var Force bool
 var Recursive bool
+var List bool
+var Length int
+var CustomUser string
+var Prefix string
+var StartItem string
 var SkipTrash bool
 var Parents bool
 var HumanReadable bool
 var Sum bool
 
-var FsCmd = &cobra.Command{
-	Use:   "fs",
-	Short: "Ozone filesystem command client",
-	Long:  `Native Ozone filesystem client`,
+var VolumeCmd = &cobra.Command{
+	Use:     "volume",
+	Aliases: []string{"vol", "v"},
+	Short:   "Volume specific operationst",
+	Long:    "Native Ozone client operations",
 }
 
-func NewOMClient() *api.OzoneClient  {
+var BucketCmd = &cobra.Command{
+	Use:     "bucket",
+	Aliases: []string{"bkt", "b"},
+	Short:   "Bucket specific operations",
+	Long:    "Native Ozone client operations",
+}
+
+var KeyCmd = &cobra.Command{
+	Use:     "key",
+	Aliases: []string{"k"},
+	Short:   "Key specific operations",
+	Long:    "Native Ozone client operations",
+}
+
+func NewOMClient() *api.OzoneClient {
 	return api.CreateOzoneClient(OmHost)
 }
 
-
-func InitFsArgs(path string) (user, host, fsPath string, err error) {
-	host, fsPath, err = api.ParseFSPath(path)
+func PrintOzone(op string, v interface{}) {
+	out, err := json.MarshalIndent(v, "", "   ")
 	if err != nil {
-		return "", "", "", err
+		log.Error(op, err)
+		os.Exit(1)
 	}
-
-	if host == "" {
-		if OmHost == "" {
-			return "", "", "", fmt.Errorf("om host not set")
-		}
-		host = OmHost
-	}
-
-	if UserName == "" {
-		if u, err := osuser.Current(); err != nil {
-			return "", "", "", err
-		} else {
-			user = u.Name
-			UserName = user
-		}
-	}
-
-	return user, host, fsPath, nil
+	println(string(out))
 }
-//
-//func PrintFiles(humanReadable bool, files ...os.FileInfo) {
-//
-//	tw := tabwriter.NewWriter(os.Stdout, 3, 8, 0, ' ', tabwriter.AlignRight|tabwriter.TabIndent)
-//	for _, f := range files {
-//		fi := f.(*OzoneFileInfo)
-//		mode := fi.Mode().String()
-//		owner := fi.Owner()
-//		group := fi.OwnerGroup()
-//		factor := int32(0)
-//		if !fi.IsDir() {
-//			factor = hadoop_hdds.ReplicationFactor_value[fi.Status.FileInfoProto.Factor.String()]
-//		}
-//
-//		size := strconv.FormatInt(fi.Size(), 10)
-//		if humanReadable {
-//			size = formatBytes(uint64(fi.Size()))
-//		}
-//		name := fi.Path()
-//		modTime := fi.ModTime()
-//		date := modTime.Format("2006-01-02 15:04")
-//
-//		_, _ = fmt.Fprintf(tw, "%s \t%d \t%s \t %s \t %s \t%s \t%s\n",
-//			mode, factor, owner, group, size, date, name)
-//	}
-//	tw.Flush()
-//
-//}
-//
-//func formatBytes(i uint64) string {
-//	switch {
-//	case i > (1024 * 1024 * 1024 * 1024):
-//		return fmt.Sprintf("%#.1fT", float64(i)/1024/1024/1024/1024)
-//	case i > (1024 * 1024 * 1024):
-//		return fmt.Sprintf("%#.1fG", float64(i)/1024/1024/1024)
-//	case i > (1024 * 1024):
-//		return fmt.Sprintf("%#.1fM", float64(i)/1024/1024)
-//	case i > 1024:
-//		return fmt.Sprintf("%#.1fK", float64(i)/1024)
-//	default:
-//		return fmt.Sprintf("%dB", i)
-//	}
-//}
-//
-//// TODO: not really sure checking for a leading \ is the way to test for
-//// escapedness.
-//func hasGlob(fragment string) bool {
-//	match, _ := regexp.MatchString(`([^\\]|^)[[*?]`, fragment)
-//	return match
-//}
-//
-//// ExpandGlobs recursively expands globs in a filepath. It assumes the paths
-//// are already cleaned and normalized (ie, absolute).
-//func ExpandGlobs(globbedPath string) ([]string, error) {
-//	parts := strings.Split(globbedPath, "/")[1:]
-//	var res []string
-//	var splitAt int
-//	for splitAt = range parts {
-//		if hasGlob(parts[splitAt]) {
-//			break
-//		}
-//	}
-//	log.Debug(parts)
-//	var base, glob, next, remainder string
-//	base = "/" + path.Join(parts[:splitAt]...)
-//	glob = parts[splitAt]
-//
-//	if len(parts) > splitAt+1 {
-//		next = parts[splitAt+1]
-//		remainder = path.Join(parts[splitAt+2:]...)
-//	} else {
-//		next = ""
-//		remainder = ""
-//	}
-//	log.Debug(base)
-//	list, err := FsCli.ListStatus(base)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	for _, fi := range list {
-//		match, _ := path.Match(glob, fi.GetFileInfoProto().GetName())
-//		if !match {
-//			continue
-//		}
-//
-//		newPath := path.Join(base, fi.GetFileInfoProto().GetName(), next, remainder)
-//		if hasGlob(newPath) {
-//			if fi.GetIsDirectory() {
-//				children, err := ExpandGlobs(newPath)
-//				if err != nil {
-//					return nil, err
-//				}
-//
-//				res = append(res, children...)
-//			}
-//		} else {
-//			//_, err := FsCli.GetFileStatus(newPath)
-//			//if err!=nil {
-//			//	continue
-//			//}
-//
-//			res = append(res, newPath)
-//		}
-//	}
-//
-//	return res, nil
-//}
-//
-//func processPath(paths []string) []string {
-//	var err error
-//	tmpPaths := make([]string, 0)
-//	FsCli, err = NewFSClientFromPath(paths[0])
-//	if err != nil {
-//		log.Error(err)
-//		os.Exit(1)
-//	}
-//
-//	for _, p := range paths {
-//		_, p, _ = util.ParseFSPath(p)
-//		if !hasGlob(p) {
-//			tmpPaths = append(tmpPaths, p)
-//			continue
-//		}
-//		li, err := ExpandGlobs(path.Clean(p))
-//		if len(li) == 0 {
-//			log.Error(p,err)
-//			os.Exit(1)
-//		}
-//		if err != nil {
-//			log.Error(err)
-//			os.Exit(1)
-//		}
-//		tmpPaths = append(tmpPaths, li...)
-//	}
-//	return tmpPaths
-//}
+
+func splitArgsToVolume(s string) (v string) {
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	arr := strings.Split(path.Clean(s), "/")
+	return arr[1]
+}
+
+func splitArgsToBucket(s string) (v, b string) {
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	arr := strings.Split(path.Clean(s), "/")
+	return arr[1], arr[2]
+}
+
+func splitArgsToKey(s string) (v, b, k string) {
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	arr := strings.Split(path.Clean(s), "/")
+	if len(arr)==4{
+		return arr[1], arr[2], arr[3]
+	}else {
+		return arr[1], arr[2], strings.Join(arr[3:],"/")
+	}
+
+}
+
+func checkLength(args []string, length int) {
+	if len(args) != length {
+		log.Error("error length", len(args), "expected length", length)
+		os.Exit(1)
+	}
+}

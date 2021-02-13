@@ -17,19 +17,21 @@ package main
 
 import (
 	"fmt"
+	"github.com/mengqi777/ozone-go/api/common"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	log "github.com/wonderivan/logger"
 	"os"
+	"os/user"
 	"strings"
 )
 
 var CfgFile string
 var OmHost string
-var UserName string
 var LogLevel string
 
 var version = "1.0"
+
 // rootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
 	Use:   "go-ozone",
@@ -56,10 +58,12 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(InitConfig)
 	RootCmd.AddCommand(versionCmd)
-	RootCmd.AddCommand(FsCmd)
+	RootCmd.AddCommand(VolumeCmd)
+	RootCmd.AddCommand(BucketCmd)
+	RootCmd.AddCommand(KeyCmd)
 	RootCmd.PersistentFlags().StringVar(&CfgFile, "config", "", "config file (default is ${pwd}/ozone.yaml)")
 	RootCmd.PersistentFlags().StringVar(&OmHost, "om", "", "Ozone manager host address")
-	RootCmd.PersistentFlags().StringVar(&UserName, "user", "", "User name")
+	RootCmd.PersistentFlags().StringVar(&common.UserName, "user", "", "User name")
 	RootCmd.PersistentFlags().StringVar(&LogLevel, "loglevel", "", "log level : debug")
 }
 
@@ -88,7 +92,8 @@ func InitConfig() {
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
 		OmHost = viper.GetString("omHost")
-		UserName=viper.GetString("userName")
+		common.UserName = viper.GetString("userName")
+		common.CLUSTER_MODE=viper.GetString("clusterMode")
 		loglevel := viper.GetString("log.level")
 		color := viper.GetString("log.color")
 		if strings.ToLower(LogLevel) == "debug" || strings.ToLower(LogLevel) == "debg" {
@@ -96,8 +101,11 @@ func InitConfig() {
 		}
 		conf := "{\"Console\": {\"level\": \"" + loglevel + "\",\"color\": " + color + "}}"
 		_ = log.SetLogger(conf)
-
 	} else {
 		log.Error("err", err)
+	}
+	if common.UserName == "" {
+		name, _ := user.Current()
+		common.UserName = name.Username
 	}
 }

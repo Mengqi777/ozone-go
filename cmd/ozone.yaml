@@ -1,0 +1,14 @@
+omHost:
+  omhost:9862
+
+userName:
+  root
+
+#level: DEBG,INFO
+log:
+  level:
+      DEBG
+  color:
+      true
+clusterMode:
+  RATIS
