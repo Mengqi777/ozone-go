@@ -24,7 +24,7 @@ type Client struct {
 }
 
 type connection struct {
-	con *net.TCPConn
+	con net.Conn
 }
 
 type connection_id struct {
@@ -155,7 +155,7 @@ func setupConnection(c *Client) (*connection, error) {
 		log.Error("error: ", err)
 		return nil, err
 	}
-	tcpConn, err := net.DialTCP("tcp", nil, addr)
+	tcpConn, err := net.Dial("tcp",  addr.String())
 	if err != nil {
 		log.Error("error: ", err)
 		return nil, err
@@ -166,7 +166,7 @@ func setupConnection(c *Client) (*connection, error) {
 	// TODO: Ping thread
 
 	// Set tcp no-delay
-	tcpConn.SetNoDelay(c.TCPNoDelay)
+	//tcpConn.SetNoDelay(c.TCPNoDelay)
 
 	return &connection{tcpConn}, nil
 }
